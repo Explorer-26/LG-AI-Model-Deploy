@@ -12,7 +12,7 @@ from pathlib import Path
 # Ensure the package root is on sys.path when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Any
@@ -116,7 +116,7 @@ async def predict_csv(
 
 @app.post("/predict/json", tags=["Predict"])
 async def predict_json(
-    payload: Any = None,
+    request: Request,
     operating_point: str = "T_house",
     device: str | None = None,
 ):
@@ -135,8 +135,14 @@ async def predict_json(
             detail=f"Unknown operating_point '{operating_point}'. Choose from: {list(predictor.operating_points.keys())}",
         )
 
-    if payload is None:
-        raise HTTPException(status_code=400, detail="Empty request body.")
+    try:
+        payload = await request.json()
+    except Exception:
+        raw_body = await request.body()
+        raise HTTPException(status_code=400, detail=f"Request body is not valid JSON. Received: {raw_body.decode(errors='ignore')}")
+
+    if not payload:
+        raise HTTPException(status_code=400, detail="Empty JSON payload received.")
 
     single_flow = False
     if isinstance(payload, list):
@@ -148,7 +154,7 @@ async def predict_json(
             flows = [payload]
             single_flow = True
     else:
-        raise HTTPException(status_code=400, detail="Payload must be a JSON object or list.")
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object or array of objects.")
 
     if not flows:
         raise HTTPException(status_code=400, detail="No flow records provided.")
@@ -156,7 +162,7 @@ async def predict_json(
     try:
         df = pd.DataFrame(flows)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to build DataFrame: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to build DataFrame from payload: {e}")
 
     # Auto-fill flow_id if missing
     if "flow_id" not in df.columns and "Flow ID" not in df.columns:
